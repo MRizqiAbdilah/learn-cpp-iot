@@ -1,185 +1,85 @@
+// Deklarasikan QueueHandle_t bernama queueJarakAir dan SemaphoreHandle_t bernama mutexSerial.
 #include <Arduino.h>
 
-// --- KONFIGURASI PIN ---
-// RELAY 32, POTENTIOMETER 34, TRIG 21, ECHO 19, LED_MERAH 27, LED_BIRU 26, BTN 16
-constexpr uint8_t PIN_RELAY = 2;
-constexpr uint8_t PIN_POTENTIOMETER = 34;
-constexpr uint8_t PIN_TRIG = 21;
-constexpr uint8_t PIN_ECHO = 19;
-constexpr uint8_t PIN_LED_MERAH = 27;
-constexpr uint8_t PIN_LED_BIRU = 26;
-constexpr uint8_t PIN_BTN = 16;
+QueueHandle_t queueJarakAir;
+SemaphoreHandle_t mutexSerial;
 
-// -- INDIKATOR --
-int INDIKATOR_ON = 1;
+// Buat TaskSensor (dipaku di Core 1):
+void TaskSensor(void *pvParameters){
+    // Buat variabel simulasi int jarakAir = 20.
+    int jarak_air = 20;
+    
+    
+    for(;;){
+        // Di dalam loop tak terbatas, kurangi jarakAir sebanyak 1 (simulasi air bertambah naik/jarak sensor ke air memendek). Jika jarakAir < 4, kembalikan nilainya ke 20.
+        jarak_air--;
 
-// --- STATE SISTEM ---
-volatile bool sistemAktif = true; // Diubah oleh ISR
-bool statusPompa = false;         // Diubah oleh logika sensor
-int levelAir = 0;                 // Diubah oleh fungsi sensor
-constexpr uint8_t MAX_TANGKI = 100;
-int buttonState = 1;
-// Variabel penyimpan state sebelumnya
-bool statusSistemSebelumnya = true;
+        if (jarak_air < 4) jarak_air = 20;
+        
+        // Gunakan Mutex untuk mencetak log secara aman: [Core 1] Membaca Jarak: [X] cm.
+        if(xSemaphoreTake(mutexSerial, portMAX_DELAY) == pdTRUE){
+            // Kirim jarakAir tersebut ke dalam queueJarakAir.
+            Serial.printf("[Core 1] Membaca Jarak Air: %d cm\n", jarak_air);
+            xSemaphoreGive(mutexSerial);
+        }
 
-// --- TRACKER WAKTU ---
-unsigned long waktuTerakhirLED = 0;
-const unsigned long jedaLED = 300;
-
-unsigned long waktuTerakhirSensor = 0;
-const unsigned long jedaSensor = 2000;
-
-unsigned long waktuTerakhirDebounce = 0;
-const unsigned long jedaDebounce = 250; // Abaikan pantulan selama 250ms
-
-// // ISR (Interrupt Service Routine)
-// void IRAM_ATTR isrTombol()
-// {
-//     sistemAktif = !sistemAktif; // Toggle sistem
-// }
-
-void IRAM_ATTR isrTombol()
-{
-    unsigned long waktuSekarang = millis();
-    // Hanya eksekusi jika jarak antar klik lebih dari 250 milidetik
-    if (waktuSekarang - waktuTerakhirDebounce > jedaDebounce) {
-        sistemAktif = !sistemAktif;
-        waktuTerakhirDebounce = waktuSekarang;
+        xQueueSend(queueJarakAir, &jarak_air, portMAX_DELAY);
+        
+        // Berikan delay RTOS 1000 milidetik.
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
-void setup()
-{
+// Buat TaskAktuator (dipaku di Core 0):
+void TaksAktuator(void *pvParameters){
+    int dataAirMasuk;
+    // Buat variabel status bool pompaMenyala = false.
+    bool pompaMenyala = false;
+    
+    for(;;){
+        
+        // Di dalam loop tak terbatas, tertidurlah sampai menerima data jarak dari queueJarakAir.
+        if(xQueueReceive(queueJarakAir, &dataAirMasuk, portMAX_DELAY) == pdPASS) {
+            // Lakukan evaluasi logika pompa berdasarkan Aturan Aktuator di atas.
+
+            // Jika jarak air >= 15 cm (air surut/hampir habis), pompa menyala (ON) untuk mengisi.
+            // Jika jarak air <= 5 cm (air sudah penuh/batas bahaya luber), pompa mati (OFF).
+            // Di antara jarak tersebut (6 cm - 14 cm), pompa mempertahankan status terakhirnya.
+            if (dataAirMasuk >= 15) {
+                pompaMenyala = true;
+            } else if (dataAirMasuk <= 5){
+                pompaMenyala = false;
+            }
+
+            // Gunakan Mutex untuk mencetak log hasil evaluasi secara aman: [Core 0] Evaluasi Jarak: [X] cm -> Pompa [ON / OFF].
+            if(xSemaphoreTake(mutexSerial, portMAX_DELAY) == pdTRUE){
+                Serial.printf("[Core 0] Evaluasi Jarak: %d cm -> Pompa %s\n", 
+                              dataAirMasuk, pompaMenyala ? "[ON]" : "[OFF]");
+                xSemaphoreGive(mutexSerial);
+            }
+        }
+    }
+}
+
+void setup(){
     Serial.begin(115200);
-    // LED INTERUPT, LED INDIKATOR NYALA
-    pinMode(PIN_LED_MERAH, OUTPUT);
-    pinMode(PIN_LED_BIRU, OUTPUT);
 
-    // SENSOR HC-SR04
-    pinMode(PIN_TRIG, OUTPUT);
-    pinMode(PIN_ECHO, INPUT);
+    // Di setup(), inisialisasi antrean untuk kapasitas 5 data int, dan ciptakan Mutex-nya. Pastikan keduanya tidak bernilai NULL.
+    queueJarakAir = xQueueCreate(5, sizeof(int));
+    mutexSerial = xSemaphoreCreateMutex();
 
-    // POTENTIOMETER
-    pinMode(PIN_POTENTIOMETER, INPUT);
-
-    // RELAY
-    pinMode(PIN_RELAY, OUTPUT);
-
-    // BUTTON
-    pinMode(PIN_BTN, INPUT_PULLUP);
-
-    // INTTERUPT
-    attachInterrupt(digitalPinToInterrupt(PIN_BTN), isrTombol, FALLING);
-}
-
-void loop()
-{
-
-    if (!sistemAktif)
-    {
-        if (statusSistemSebelumnya == true) {
-            digitalWrite(PIN_RELAY, LOW); // Amankan mesin utama
-            digitalWrite(PIN_LED_BIRU, LOW); 
-            INDIKATOR_ON = 0;
-            Serial.println("[SISTEM] STANDBY - Mesin Dimatikan");
-
-            statusSistemSebelumnya = false; // Tandai bahwa sistem sudah mati
-        }
-        return;
-    }
-
-    // Kembalikan status jika sistem kembali dinyalakan
-    if (statusSistemSebelumnya == false) {
-        Serial.println("[SISTEM] AKTIF - Memulai ulang...");
-        INDIKATOR_ON = 1;
-        digitalWrite(PIN_LED_MERAH, LOW);
-        statusSistemSebelumnya = true;
-    }
-
-    // --- TASK 1: Heartbeat LED (Non-blocking) ---
-    unsigned long waktuSekarang = millis();
-    if (waktuSekarang - waktuTerakhirLED >= jedaLED)
-    {
-        waktuTerakhirLED = waktuSekarang;
-        if (INDIKATOR_ON == 1) {
-            // Berkedip normal
-            digitalWrite(PIN_LED_BIRU, !digitalRead(PIN_LED_BIRU)); 
-        } else {
-            // Mati total saat standby/error
-            digitalWrite(PIN_LED_BIRU, LOW); 
-        }
-    }
-
-    // --- TASK 2: (Lakukan pembacaan sensor dan kontrol relay di sini) ---
-    if (waktuSekarang - waktuTerakhirSensor >= jedaSensor)
-    {
-        waktuTerakhirSensor = waktuSekarang;
-        // Set Trigger Sensor-HCSR04
-        // LOW - HIGH -> 2ms
-        digitalWrite(PIN_TRIG, LOW);
-        delayMicroseconds(2);
-        // HIGH - LOW -> 10ms
-        digitalWrite(PIN_TRIG, HIGH);
-        delayMicroseconds(10);
-        digitalWrite(PIN_TRIG, LOW);
-
-        // Mengukur sinyal ECHO
-        long durasi = pulseIn(PIN_ECHO, HIGH);
-
-        // konversi ke cm
-        float jarak_cm = (durasi * 0.034) / 2;
-
-        // Mencetak hasil ke serial monitor
-        Serial.print("Jarak (cm): ");
-        Serial.print(jarak_cm);
-        Serial.println(" cm");
-
-        // konversi ke dalam persentase
-        float jarak_persentase = (MAX_TANGKI - jarak_cm) / MAX_TANGKI * 100;
-
-        // Mencetak hasil ke serial monitor
-        Serial.print("Jarak (%): ");
-        Serial.print(jarak_persentase);
-        Serial.println("%");
-
-        if (jarak_persentase < 20 && jarak_persentase > 0){
-            levelAir = 1;
-        } else if (jarak_persentase > 80 && jarak_persentase < 100) {
-            levelAir = 0;
-        } else if (jarak_persentase >= 20 && jarak_persentase <= 80){
-            levelAir = 2;
-        } else {
-            levelAir = 3;
-        }
-
-        switch (levelAir)
-        {
-        case 0:
-            Serial.println("[AKSI] Air Penuh, Pompa Dimatikan");
-            digitalWrite(PIN_RELAY, LOW);
-            statusPompa = false;
-            break;
-        case 1: 
-            Serial.println("[AKSI] | Air Surut, Pompa Dinyalakan");
-            digitalWrite(PIN_RELAY, HIGH);
-            statusPompa = true;
-            break;
-        case 2: 
-            Serial.println("[INFO] Air Aman");
-            break;
-        default:
-            // Serial.println("Air Tidak Diketahui, Data Anomali Nyalakan LED MERAH");
-            // digitalWrite(PIN_LED_MERAH, HIGH);
-            // sistemAktif = false;
-            // statusSistemSebelumnya = false;
-            // break;
-            Serial.println("[ERROR] Data Anomali! Pompa Dimatikan Darurat.");
-            digitalWrite(PIN_LED_MERAH, HIGH);
-            digitalWrite(PIN_LED_BIRU, LOW);
-            digitalWrite(PIN_RELAY, LOW); // Matikan pompa saja, bukan mematikan sistem
-            INDIKATOR_ON = 0;
-            statusPompa = false;
-            break;
-        }
+    if(queueJarakAir != NULL && mutexSerial != NULL){
+        // Daftarkan kedua Task di setup() dengan memori 2048 dan prioritas 1.
+        xTaskCreatePinnedToCore(TaskSensor, "SensorTask", 2048, NULL, 1, NULL, 1);
+        xTaskCreatePinnedToCore(TaksAktuator, "ActuatorTask", 2048, NULL, 1, NULL, 0);
     }
 }
+
+// Kosongkan fungsi loop() bawaan dengan delay maksimum RTOS.
+void loop(){
+    vTaskDelay(portMAX_DELAY);
+}
+
+
+
+
