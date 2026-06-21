@@ -10,7 +10,7 @@ const char *password = "";
 // Setup MQTT
 constexpr const char *MQTT_SERVER = "mqtt://broker.emqx.io:1883";
 
-constexpr const char *TOPIC_PUB_SENSOR = "skripsi/hidroponik/sensor/data";
+constexpr const char* TOPIC_PUB_SENSOR = "skripsi/hidroponik/sensor/data";
 
 constexpr uint8_t PIN_TRIG = 32;
 constexpr uint8_t PIN_ECHO = 35;
@@ -21,9 +21,8 @@ uint32_t waktuJedaSensor = 1000;
 uint32_t waktuPublish = 0;
 uint32_t waktuJedaPublish = 5000;
 
-uint32_t waktuReconnectTerakhir = 0;
-uint32_t intervalReconnect = 5000;  // Coba reconnect MQTT setiap 5 detik
-const uint32_t MAX_INTERVAL = 5000; // Coba reconnect MQTT setiap 5 detik
+uint32_t waktuMQTT = 0;
+uint32_t waktuJedaMQTT = 5000; // Coba reconnect MQTT setiap 5 detik
 
 PsychicMqttClient mqttClient;
 bool statusWifi = false; // Flag untuk memastikan WiFi siap
@@ -59,7 +58,7 @@ void loop()
     long waktuSekarang = millis();
     bool mqttConnected = mqttClient.connected();
 
-    // // --- DETEKSI PERUBAHAN STATUS MQTT (Edge Detection) ---
+    // --- DETEKSI PERUBAHAN STATUS MQTT (Edge Detection) ---
     if (mqttConnected && !statusMqtt)
     {
         Serial.println("[MQTT] Berhasil Terhubung ke Broker!");
@@ -71,26 +70,13 @@ void loop()
         statusMqtt = false; // Update status
     }
 
-    if (WiFi.status() != WL_CONNECTED)
+    // --- LOGIKA KONEKSI & RECONNECT MQTT ---
+    if (statusWifi && !mqttConnected)
     {
-        intervalReconnect = 5000;
-    }
-    else if (mqttConnected && !statusMqtt && statusWifi)
-    {
-        Serial.println("[MQTT] Berhasil Terhubung ke Broker!");
-        statusMqtt = true; // Update status
-    } 
-    else if (statusWifi && !mqttConnected)
-    {
-        statusMqtt = false; // Update status
-        if (waktuSekarang - waktuReconnectTerakhir > intervalReconnect)
+        if (waktuSekarang - waktuMQTT > waktuJedaMQTT)
         {
-            waktuReconnectTerakhir = waktuSekarang;
-
-            // Serial.print("[MQTT] Mencoba koneksi... (Jeda saat ini: %d ms)");
-            // Serial.println(intervalReconnect);
-            Serial.printf("[MQTT] Mencoba koneksi... (Jeda saat ini: %d ms)\n", intervalReconnect);
-
+            waktuMQTT = waktuSekarang;
+            Serial.println("[MQTT] Mencoba terhubung ke broker..."); // 1. Ambil MAC Address dari modul WiFi
             String macAddress = WiFi.macAddress();
 
             // 2. Gabungkan dengan teks awalan
@@ -100,29 +86,7 @@ void loop()
             mqttClient.setClientId(clientId.c_str());
             Serial.println(mqttClient.getClientId());
             mqttClient.connect();
-
-            if (mqttConnected)
-            {
-                Serial.println("[MQTT] Berhasil terhubung!");
-                // Jika sukses, wajib me-reset interval ke angka awal
-                intervalReconnect = 5000;
-            }
-            else
-            {
-                // Jika gagal, gandakan jeda waktu untuk percobaan berikutnya
-                intervalReconnect *= 2;
-
-                // Pastikan jeda tidak melewati batas maksimal yang diizinkan
-                if (intervalReconnect > MAX_INTERVAL)
-                {
-                    intervalReconnect = MAX_INTERVAL;
-                }
-            }
         }
-    }
-    else
-    {
-        mqttClient.setAutoReconnect();
     }
 
     // --- LOGIKA SENSOR & PUBLISH ---
@@ -134,10 +98,13 @@ void loop()
         float nilaiPh = random(55, 66) / 10.0;
 
         if (mqttConnected && waktuSekarang - waktuPublish > waktuJedaPublish)
-        {
+        {      
             waktuPublish = waktuSekarang;
             publishSensorJson(jarakCm, nilaiTds, nilaiPh);
-
+            
+            // // Un-comment di bawah ini kalau mau lihat bukti data terkirim di Serial Monitor
+            // Serial.print("[MQTT TX] ");
+            // Serial.println(payload);
         }
     }
 }
@@ -180,8 +147,7 @@ float readDistanceCm()
     return (durasi * 0.034) / 2;
 }
 
-void publishSensorJson(float jarakAir, int nilaiTds, float nilaiPh)
-{
+void publishSensorJson(float jarakAir, int nilaiTds, float nilaiPh){
 
     JsonDocument doc;
 
@@ -196,4 +162,5 @@ void publishSensorJson(float jarakAir, int nilaiTds, float nilaiPh)
     mqttClient.publish(TOPIC_PUB_SENSOR, 0, 0, jsonBuffer);
     Serial.println("[MQTT] Berhasil publish JSON:");
     Serial.println(jsonBuffer);
+
 }

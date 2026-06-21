@@ -1,51 +1,18 @@
 {
   "version": 1,
-  "author": "Abdul Hakim Prima Yuniarto",
+  "author": "Uri Shaked",
   "editor": "wokwi",
   "parts": [
-    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": -168.1, "left": -341, "attrs": {} },
-    { "type": "wokwi-dht22", "id": "dht1", "top": -239.7, "left": -101.4, "attrs": {} },
-    { "type": "wokwi-relay-module", "id": "relay1", "top": -451, "left": 86.4, "attrs": {} },
-    {
-      "type": "board-ssd1306",
-      "id": "oled1",
-      "top": -332.86,
-      "left": 259.43,
-      "attrs": { "i2cAddress": "0x3c" }
-    },
-    { "type": "wokwi-potentiometer", "id": "pot1", "top": -423.7, "left": 316.6, "attrs": {} },
-    {
-      "type": "wokwi-pushbutton",
-      "id": "btn1",
-      "top": -310.6,
-      "left": 163.2,
-      "attrs": { "color": "green" }
-    },
-    {
-      "type": "wokwi-led",
-      "id": "led1",
-      "top": -454.8,
-      "left": 42.2,
-      "attrs": { "color": "cyan" }
-    },
-    {
-      "type": "wokwi-lcd1602",
-      "id": "lcd1",
-      "top": 6.4,
-      "left": -148,
-      "attrs": { "pins": "i2c" }
-    }
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-hc-sr04", "id": "ultrasonic1", "top": -94.5, "left": -186.5, "attrs": {} }
   ],
   "connections": [
-    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
-    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
-    [ "dht1:GND", "esp:GND.1", "black", [ "v0" ] ],
-    [ "dht1:SDA", "esp:D5", "green", [ "v0" ] ],
-    [ "lcd1:GND", "esp:GND.2", "black", [ "h-220.8", "v-57.5" ] ],
-    [ "lcd1:SDA", "esp:D21", "green", [ "h-67.2", "v-162.6" ] ],
-    [ "lcd1:SCL", "esp:D22", "green", [ "h-57.6", "v-201" ] ],
-    [ "lcd1:VCC", "esp:VIN", "red", [ "h-230.4", "v-57.5" ] ],
-    [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ]
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "ultrasonic1:VCC", "esp:5V", "red", [ "v0" ] ],
+    [ "ultrasonic1:GND", "esp:GND.1", "black", [ "v0" ] ],
+    [ "ultrasonic1:ECHO", "esp:35", "green", [ "v0" ] ],
+    [ "ultrasonic1:TRIG", "esp:32", "green", [ "v0" ] ]
   ],
   "dependencies": {}
 }
